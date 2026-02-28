@@ -18,6 +18,11 @@ exec 2>>"$LOG_FILE"
 # Temporary directory for setup
 TEMP_DIR=$(mktemp -d)
 
+# Ubuntu-first proot settings
+DISTRO="ubuntu"
+DISPLAY_NUM=":0"
+ROOTFS="$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO"
+
 # Function to print colored status
 print_status() {
     local status=$1
@@ -101,6 +106,10 @@ detect_termux() {
     fi
 }
 
+pd_login() {
+  pd login "$DISTRO" --shared-tmp -- env DISPLAY="$DISPLAY_NUM" "$@"
+}
+
 # Main installation function
 main() {
     clear
@@ -120,7 +129,7 @@ main() {
     fi
 
     echo -e "\n${GREEN}This will install XFCE native desktop in Termux"
-    echo -e "${GREEN}A Debian proot-distro is also installed for additional software"
+    echo -e "${GREEN}An Ubuntu proot-distro is also installed for additional software"
     echo -e "${GREEN}while also enabling hardware acceleration"
     echo -e "${GREEN}This setup has been tested on a Samsung Galaxy S24 Ultra"
     echo -e "${GREEN}It should run on most phones however.${NC}"
@@ -152,6 +161,11 @@ else
 fi
 
 # Upgrade packages
+if ! pkg update -y -o Dpkg::Options::="--force-confold"; then
+  echo "Failed to update packages. Exiting."
+  exit 1
+fi
+
 if ! pkg upgrade -y -o Dpkg::Options::="--force-confold"; then
     echo "Failed to upgrade packages. Exiting."
     exit 1
@@ -192,21 +206,33 @@ if ! pkg install -y "${xfce_packages[@]}" -o Dpkg::Options::="--force-confold"; 
     exit 1
 fi
 
+# Install Korean input method packages in Termux
+korean_termux_packages=('fcitx5' 'fcitx5-gtk' 'fcitx5-qt' 'fcitx5-configtool' 'libhangul' 'libhangul-static')
+if ! pkg install -y "${korean_termux_packages[@]}" -o Dpkg::Options::="--force-confold"; then
+  echo "Warning: Some Korean input packages for Termux could not be installed."
+fi
+
 # Set aliases
 echo "
-alias debian='proot-distro login debian --user $username --shared-tmp'
+alias ubuntu='proot-distro login $DISTRO --user $username --shared-tmp'
+alias debian='proot-distro login $DISTRO --user $username --shared-tmp'
 alias ls='eza -lF --icons'
 alias cat='bat '
+
+export XMODIFIERS=@im=fcitx
+export GTK_IM_MODULE=fcitx
+export QT_IM_MODULE=fcitx
+export DefaultIMModule=fcitx
 
 eval "$(starship init bash)"
 " >> $PREFIX/etc/bash.bashrc
 
 # Download starship theme
-curl -o $HOME/.config/starship.toml https://raw.githubusercontent.com/phoenixbyrd/Termux_XFCE/refs/heads/main/starship.toml
+curl -o $HOME/.config/starship.toml https://raw.githubusercontent.com/brfluidpri/Termux_XFCE_ubuntu/main/starship.toml
 sed -i "s/phoenixbyrd/$username/" $HOME/.config/starship.toml
 
 # Download Wallpaper
-wget https://raw.githubusercontent.com/phoenixbyrd/Termux_XFCE/main/dark_waves.png
+wget https://raw.githubusercontent.com/brfluidpri/Termux_XFCE_ubuntu/main/dark_waves.png
 mv dark_waves.png $PREFIX/share/backgrounds/xfce/
 
 # Install WhiteSur-Dark Theme
@@ -528,7 +554,7 @@ EOF
 # Create bookmarks with custom name
 cat <<EOF > $HOME/.config/gtk-3.0/bookmarks
 file:////data/data/com.termux/files/home/Downloads
-file:///data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs/debian/home/$username Debian Home
+file:///data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs/$DISTRO/home/$username Ubuntu Home
 file:////data/data/com.termux/files/home/storage/shared/ Android Storage
 EOF
 
@@ -639,14 +665,14 @@ rm Meslo.zip
 rm LICENSE.txt
 rm readme.md
 
-wget https://github.com/phoenixbyrd/Termux_XFCE/raw/main/NotoColorEmoji-Regular.ttf
+wget https://raw.githubusercontent.com/brfluidpri/Termux_XFCE_ubuntu/main/NotoColorEmoji-Regular.ttf
 mv NotoColorEmoji-Regular.ttf .fonts
 
-wget https://github.com/phoenixbyrd/Termux_XFCE/raw/main/font.ttf
+wget https://raw.githubusercontent.com/brfluidpri/Termux_XFCE_ubuntu/main/font.ttf
 mv font.ttf .termux/font.ttf
 
-# Create start script
-cat <<'EOF' > $PREFIX/bin/start
+# Create start_native script
+cat <<'EOF' > $PREFIX/bin/start_native
 #!/bin/bash
 
 # Kill open X11 processes
@@ -708,6 +734,14 @@ env DISPLAY=:0 GALLIUM_DRIVER=virpipe dbus-launch --exit-with-session xfce4-sess
 exit 0
 EOF
 
+chmod +x $PREFIX/bin/start_native
+
+# Compatibility wrapper
+cat <<'EOF' > $PREFIX/bin/start
+#!/bin/bash
+exec start_native "$@"
+EOF
+
 chmod +x $PREFIX/bin/start
 
 # Create shutdown utility
@@ -742,8 +776,9 @@ mv $HOME/Desktop/kill_termux_x11.desktop $PREFIX/share/applications
 # Create prun script
 cat <<'EOF' > $PREFIX/bin/prun
 #!/bin/bash
-varname=$(basename $PREFIX/var/lib/proot-distro/installed-rootfs/debian/home/*)
-pd login debian --user $varname --shared-tmp -- env DISPLAY=:0 $@
+DISTRO="ubuntu"
+varname=$(basename $PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO/home/*)
+pd login $DISTRO --user $varname --shared-tmp -- env DISPLAY=:0 "$@"
 
 EOF
 chmod +x $PREFIX/bin/prun
@@ -751,8 +786,9 @@ chmod +x $PREFIX/bin/prun
 # Create zrun script
 cat <<'EOF' > $PREFIX/bin/zrun
 #!/bin/bash
-varname=$(basename $PREFIX/var/lib/proot-distro/installed-rootfs/debian/home/*)
-pd login debian --user $varname --shared-tmp -- env DISPLAY=:0 MESA_LOADER_DRIVER_OVERRIDE=zink TU_DEBUG=noconform $@
+DISTRO="ubuntu"
+varname=$(basename $PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO/home/*)
+pd login $DISTRO --user $varname --shared-tmp -- env DISPLAY=:0 MESA_LOADER_DRIVER_OVERRIDE=zink TU_DEBUG=noconform "$@"
 
 EOF
 chmod +x $PREFIX/bin/zrun
@@ -760,8 +796,9 @@ chmod +x $PREFIX/bin/zrun
 # Create zrunhud script
 cat <<'EOF' > $PREFIX/bin/zrunhud
 #!/bin/bash
-varname=$(basename $PREFIX/var/lib/proot-distro/installed-rootfs/debian/home/*)
-pd login debian --user $varname --shared-tmp -- env DISPLAY=:0 MESA_LOADER_DRIVER_OVERRIDE=zink TU_DEBUG=noconform GALLIUM_HUD=fps $@
+DISTRO="ubuntu"
+varname=$(basename $PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO/home/*)
+pd login $DISTRO --user $varname --shared-tmp -- env DISPLAY=:0 MESA_LOADER_DRIVER_OVERRIDE=zink TU_DEBUG=noconform GALLIUM_HUD=fps "$@"
 
 EOF
 chmod +x $PREFIX/bin/zrunhud
@@ -788,7 +825,7 @@ cp $HOME/Desktop/App-Installer.desktop $PREFIX/share/applications
 
 # cp2menu
 
-wget https://github.com/phoenixbyrd/Termux_XFCE/raw/refs/heads/main/cp2menu -O $PREFIX/bin/cp2menu
+wget https://raw.githubusercontent.com/brfluidpri/Termux_XFCE_ubuntu/main/cp2menu -O $PREFIX/bin/cp2menu
 chmod +x $PREFIX/bin/cp2menu
 
 echo "[Desktop Entry]
@@ -805,27 +842,38 @@ StartupNotify=false
 " > $PREFIX/share/applications/cp2menu.desktop
 chmod +x $PREFIX/share/applications/cp2menu.desktop
 
-# Install Debian proot
-pkgs_proot=('sudo' 'onboard' 'conky-all' 'flameshot')
+# Install Ubuntu proot
+pkgs_proot=('sudo' 'onboard' 'conky-all' 'flameshot' 'locales' 'language-pack-ko' 'language-pack-gnome-ko-base' 'fonts-nanum' 'fonts-nanum-coding' 'fonts-nanum-extra' 'fonts-noto-cjk' 'im-config')
 
-# Install Debian proot
-pd install debian
-pd login debian --shared-tmp -- env DISPLAY=:0 apt update
-pd login debian --shared-tmp -- env DISPLAY=:0 apt upgrade -y
-pd login debian --shared-tmp -- env DISPLAY=:0 apt install "${pkgs_proot[@]}" -y -o Dpkg::Options::="--force-confold"
+pd install "$DISTRO"
+pd_login apt update
+pd_login apt upgrade -y
+pd_login apt install "${pkgs_proot[@]}" -y -o Dpkg::Options::="--force-confold"
+
+# Install fcitx5 packages in Ubuntu when available
+pd_login bash -lc 'if apt-cache show fcitx5-hangul >/dev/null 2>&1; then apt install -y fcitx5 fcitx5-hangul fcitx5-frontend-gtk3 fcitx5-frontend-qt5; fi'
+
+# Configure Korean locale in Ubuntu
+pd_login locale-gen ko_KR.UTF-8 en_US.UTF-8
+pd_login update-locale LANG=ko_KR.UTF-8 LC_ALL=ko_KR.UTF-8
 
 # Create user
-pd login debian --shared-tmp -- env DISPLAY=:0 groupadd storage
-pd login debian --shared-tmp -- env DISPLAY=:0 groupadd wheel
-pd login debian --shared-tmp -- env DISPLAY=:0 useradd -m -g users -G wheel,audio,video,storage -s /bin/bash "$username"
+pd_login groupadd -f storage
+pd_login groupadd -f wheel
+pd_login useradd -m -g users -G wheel,audio,video,storage -s /bin/bash "$username" || true
 
 # Add user to sudoers
-chmod u+rw $PREFIX/var/lib/proot-distro/installed-rootfs/debian/etc/sudoers
-echo "$username ALL=(ALL) NOPASSWD:ALL" | tee -a $PREFIX/var/lib/proot-distro/installed-rootfs/debian/etc/sudoers > /dev/null
-chmod u-w  $PREFIX/var/lib/proot-distro/installed-rootfs/debian/etc/sudoers
+chmod u+rw "$ROOTFS/etc/sudoers"
+echo "$username ALL=(ALL) NOPASSWD:ALL" | tee -a "$ROOTFS/etc/sudoers" > /dev/null
+chmod u-w "$ROOTFS/etc/sudoers"
 
-# Set proot DISPLAY
-echo "export DISPLAY=:0" >> $PREFIX/var/lib/proot-distro/installed-rootfs/debian/home/$username/.bashrc
+# Set proot DISPLAY and Korean IME env
+echo "export DISPLAY=$DISPLAY_NUM" >> "$ROOTFS/home/$username/.bashrc"
+echo "export XMODIFIERS=@im=fcitx" >> "$ROOTFS/home/$username/.bashrc"
+echo "export GTK_IM_MODULE=fcitx" >> "$ROOTFS/home/$username/.bashrc"
+echo "export QT_IM_MODULE=fcitx" >> "$ROOTFS/home/$username/.bashrc"
+echo "export LANG=ko_KR.UTF-8" >> "$ROOTFS/home/$username/.bashrc"
+echo "export LC_ALL=ko_KR.UTF-8" >> "$ROOTFS/home/$username/.bashrc"
 
 # Set aliases
 echo "
@@ -833,40 +881,40 @@ alias ls='eza -lF --icons'
 alias cat='bat '
 
 eval "$(starship init bash)"
-" >> $PREFIX/var/lib/proot-distro/installed-rootfs/debian/home/$username/.bashrc
+" >> "$ROOTFS/home/$username/.bashrc"
 
 # Set proot timezone
 timezone=$(getprop persist.sys.timezone)
-pd login debian --shared-tmp -- env DISPLAY=:0 rm /etc/localtime
-pd login debian --shared-tmp -- env DISPLAY=:0 cp /usr/share/zoneinfo/$timezone /etc/localtime
+pd_login rm /etc/localtime
+pd_login cp "/usr/share/zoneinfo/$timezone" /etc/localtime
 
 # Setup Hardware Acceleration in proot
-pd login debian --shared-tmp -- env DISPLAY=:0 wget https://github.com/phoenixbyrd/Termux_XFCE/raw/main/mesa-vulkan-kgsl_24.1.0-devel-20240120_arm64.deb
-pd login debian --shared-tmp -- env DISPLAY=:0 sudo apt install -y ./mesa-vulkan-kgsl_24.1.0-devel-20240120_arm64.deb
+pd_login wget https://raw.githubusercontent.com/brfluidpri/Termux_XFCE_ubuntu/main/mesa-vulkan-kgsl_24.1.0-devel-20240120_arm64.deb
+pd_login sudo apt install -y ./mesa-vulkan-kgsl_24.1.0-devel-20240120_arm64.deb
 
-mkdir -p $PREFIX/var/lib/proot-distro/installed-rootfs/debian/home/$username/.config/
+mkdir -p "$ROOTFS/home/$username/.config/"
 
 # Download proot starship theme
-curl -o $PREFIX/var/lib/proot-distro/installed-rootfs/debian/home/$username/.config/starship.toml https://raw.githubusercontent.com/phoenixbyrd/Termux_XFCE/refs/heads/main/starship_proot.toml
-sed -i "s/phoenixbyrd/$username/" $PREFIX/var/lib/proot-distro/installed-rootfs/debian/home/$username/.config/starship.toml
+curl -o "$ROOTFS/home/$username/.config/starship.toml" https://raw.githubusercontent.com/brfluidpri/Termux_XFCE_ubuntu/main/starship_proot.toml
+sed -i "s/phoenixbyrd/$username/" "$ROOTFS/home/$username/.config/starship.toml"
 
 # Apply cursor theme
-cp -r $PREFIX/share/icons/dist-dark $PREFIX/var/lib/proot-distro/installed-rootfs/debian/usr/share/icons/dist-dark
-cat <<'EOF' > $PREFIX/var/lib/proot-distro/installed-rootfs/debian/home/$username/.Xresources
+cp -r "$PREFIX/share/icons/dist-dark" "$ROOTFS/usr/share/icons/dist-dark"
+cat <<'EOF' > "$ROOTFS/home/$username/.Xresources"
 Xcursor.theme: dist-dark
 EOF
 
-wget https://github.com/phoenixbyrd/Termux_XFCE/raw/main/conky.tar.gz
+wget https://raw.githubusercontent.com/brfluidpri/Termux_XFCE_ubuntu/main/conky.tar.gz
 tar -xvzf conky.tar.gz
 rm conky.tar.gz
-mv $HOME/.config/conky/ $PREFIX/var/lib/proot-distro/installed-rootfs/debian/home/$username/.config/
+mv $HOME/.config/conky/ "$ROOTFS/home/$username/.config/"
 
 # Conky
-cp $PREFIX/var/lib/proot-distro/installed-rootfs/debian/usr/share/applications/conky.desktop $HOME/.config/autostart/
+cp "$ROOTFS/usr/share/applications/conky.desktop" $HOME/.config/autostart/
 sed -i 's|^Exec=.*$|Exec=prun conky -c .config/conky/Alterf/Alterf.conf|' $HOME/.config/autostart/conky.desktop
 
 # Flameshot
-cp $PREFIX/var/lib/proot-distro/installed-rootfs/debian/usr/share/applications/org.flameshot.Flameshot.desktop $HOME/.config/autostart/
+cp "$ROOTFS/usr/share/applications/org.flameshot.Flameshot.desktop" $HOME/.config/autostart/
 sed -i 's|^Exec=.*$|Exec=prun flameshot|' $HOME/.config/autostart/org.flameshot.Flameshot.desktop
 
 chmod +x $HOME/.config/autostart/*.desktop
@@ -883,17 +931,23 @@ echo -e "${BLUE}║         Setup Complete!            ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════╝${NC}\n"
 
 echo -e "${GREEN}Available Commands:${NC}"
-echo -e "${YELLOW}start${NC}"
+echo -e "${YELLOW}start_native${NC}"
 echo -e "Launches the XFCE desktop environment with hardware acceleration enabled\n"
 
+echo -e "${YELLOW}start${NC}"
+echo -e "Compatibility wrapper for start_native\n"
+
+echo -e "${YELLOW}ubuntu${NC}"
+echo -e "Enters the Ubuntu proot environment for installing additional aarch64 packages\n"
+
 echo -e "${YELLOW}debian${NC}"
-echo -e "Enters the Debian proot environment for installing additional aarch64 packages\n"
+echo -e "Compatibility alias that forwards to Ubuntu proot login\n"
 
 echo -e "${YELLOW}prun${NC}"
-echo -e "Executes Debian proot applications directly from Termux\n"
+echo -e "Executes Ubuntu proot applications directly from Termux\n"
 
 echo -e "${YELLOW}zrun${NC}"
-echo -e "Runs Debian applications with hardware acceleration enabled\n"
+echo -e "Runs Ubuntu applications with hardware acceleration enabled\n"
 
 echo -e "${YELLOW}zrunhud${NC}"
 echo -e "Same as zrun but includes an FPS overlay for performance monitoring\n"
@@ -903,7 +957,7 @@ echo -e "1. Open Firefox settings"
 echo -e "2. Search for 'performance'"
 echo -e "3. Uncheck the hardware acceleration option\n"
 
-echo -e "${YELLOW}Installation complete! Use 'start' to launch your desktop environment.${NC}\n"
+echo -e "${YELLOW}Installation complete! Use 'start_native' to launch your desktop environment.${NC}\n"
 
 
 source $PREFIX/etc/bash.bashrc
